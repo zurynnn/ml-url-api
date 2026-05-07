@@ -4,6 +4,7 @@ from feature_extractor import extract_features, suspicious_list
 from urllib.parse import urlparse
 import os
 import requests as req
+import unicodedata  # NEW
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Load model (RF))
@@ -35,6 +36,156 @@ SHORTENER_DOMAINS = {
     'buff.ly', 'adf.ly', 'shorte.st', 'link.tl'
 }
 
+# Whitelist domains
+TRUSTED_DOMAINS = {
+    'google.com', 'youtube.com', 'facebook.com', 'instagram.com',
+    'twitter.com', 'x.com', 'github.com', 'microsoft.com',
+    'apple.com', 'amazon.com', 'wikipedia.org', 'linkedin.com',
+    'paypal.com', 'wattpad.com', 'tngdigital.com.my',
+    'translate.google.com', 'maps.google.com', 'booking.com'
+}
+
+#Homograph --- NEW
+def check_homograph_attack(url):
+    """
+    Detect homograph/Unicode spoofing attacks.
+    Returns {'is_attack': bool, 'reason': str}
+    """
+    
+    # Extract domain from URL
+    parsed = urlparse(url)
+    domain = parsed.netloc.replace('www.', '')
+    
+    if not domain:
+        return {'is_attack': False, 'reason': None}
+    
+    # ===== CHECK 1: Mixed Script Detection =====
+    # Cyrillic characters that look like Latin
+    cyrillic_chars = []
+    latin_chars = []
+    
+    for char in domain:
+        try:
+            char_name = unicodedata.name(char)
+            if 'CYRILLIC' in char_name:
+                cyrillic_chars.append(char)
+            elif 'GREEK' in char_name:        # ← ADD THIS
+                cyrillic_chars.append(char)
+            elif 'LATIN' in char_name:
+                latin_chars.append(char)
+        except (ValueError, TypeError):
+            pass
+    
+    # If domain contains BOTH Cyrillic and Latin characters
+    if cyrillic_chars and latin_chars:
+        return {
+            'is_attack': True,
+            'reason': f'Mixed scripts: Cyrillic ({cyrillic_chars}) and Latin characters'
+        }
+    
+    # ===== CHECK 2: Known Lookalike Characters =====
+    # Maps Cyrillic → Latin equivalent
+    lookalikes = {
+        'а': 'a',   # Cyrillic a
+        'е': 'e',   # Cyrillic e  
+        'о': 'o',   # Cyrillic o
+        'р': 'p',   # Cyrillic p
+        'с': 'c',   # Cyrillic c
+        'у': 'y',   # Cyrillic u
+        'х': 'x',   # Cyrillic x
+        'к': 'k',   # Cyrillic k
+        'м': 'm',   # Cyrillic m
+        'н': 'h',   # Cyrillic n
+        'в': 'b',   # Cyrillic v
+        'т': 't',   # Cyrillic t
+        'ө': 'o',
+        'ғ': 'f',
+
+        # Greek lookalikes 
+        'ο': 'o',   # Greek omicron
+        'α': 'a',   # Greek alpha
+        'ν': 'v',   # Greek nu
+        'κ': 'k',   # Greek kappa
+        'ρ': 'p',   # Greek rho
+        'ε': 'e',   # Greek epsilon
+    }
+    
+    # Check if domain contains lookalike characters
+    for cyrillic_char, latin_char in lookalikes.items():
+        if cyrillic_char in domain:
+            # Create a "normalized" version
+            normalized = domain.replace(cyrillic_char, latin_char)
+            
+            # Check against trusted domains
+            for trusted in TRUSTED_DOMAINS:
+                if normalized == trusted or normalized.endswith('.' + trusted):
+                    return {
+                        'is_attack': True,
+                        'reason': f'Lookalike attack: "{domain}" pretends to be "{trusted}" (uses Cyrillic {cyrillic_char} instead of {latin_char})'
+                    }
+    
+    # ===== CHECK 3: Digit Substitution (g00gle → google) =====
+    # Only check ASCII domains
+    if domain.isascii(): 
+        def _normalize_digits(d):
+            """Try all digit substitution combinations."""
+            # Check for digit substitutions    
+            digit_map = {
+                '0': 'o',
+                '3': 'e',
+                '4': 'a',
+                '5': 's',
+                '7': 't',
+                '8': 'b',
+                '@': 'a',
+                '$': 's'
+            }
+            # First pass — basic substitution
+            normalized = d
+            for digit, letter in digit_map.items():
+                normalized = normalized.replace(digit, letter)
+            
+            results = set()
+            results.add(normalized)
+            # Handle '1' separately — try both 'i' and 'l'
+            results.add(normalized.replace('1', 'i'))
+            results.add(normalized.replace('1', 'l'))
+            return results
+
+        # If normalization changed the domain, check against trusted domains
+        normalized_versions = _normalize_digits(domain)
+        for normalized in normalized_versions: 
+            if normalized != domain: # only if something changed
+                for trusted in TRUSTED_DOMAINS:
+                    if normalized == trusted or normalized.endswith('.' + trusted):
+                        return {
+                            'is_attack': True,
+                            'reason': f'Digit substitution: "{domain}" looks like "{trusted}"'
+                        }
+        
+    # ===== CHECK 4: Character Substitution (rn → m) =====
+    if 'rn' in domain:
+        normalized = domain.replace('rn', 'm')
+        for trusted in TRUSTED_DOMAINS:
+            if normalized == trusted or normalized.endswith('.' + trusted):
+                return {
+                    'is_attack': True,
+                    'reason': f'Character substitution: "{domain}" looks like "{trusted}" (rn → m)'
+                }
+    
+    # ===== CHECK 5: Double Character Substitution (vv → w) =====
+    if 'vv' in domain:
+        normalized = domain.replace('vv', 'w')
+        for trusted in TRUSTED_DOMAINS:
+            if normalized == trusted or normalized.endswith('.' + trusted):
+                return {
+                    'is_attack': True,
+                    'reason': f'Character substitution: "{domain}" looks like "{trusted}" (vv → w)'
+                }
+    
+    return {'is_attack': False, 'reason': None}
+#//
+
 def unshorten_url(url):
     """Follow redirects to get the final destination URL."""
     parsed = urlparse(url)
@@ -52,14 +203,6 @@ def unshorten_url(url):
         print(f"[Unshorten failed] {e}")
         return url  # if it fails, analyse the short URL itself
     
-# Whitelist domains
-TRUSTED_DOMAINS = {
-    'google.com', 'youtube.com', 'facebook.com', 'instagram.com',
-    'twitter.com', 'x.com', 'github.com', 'microsoft.com',
-    'apple.com', 'amazon.com', 'wikipedia.org', 'linkedin.com',
-    'paypal.com', 'wattpad.com', 'tngdigital.com.my',
-    'translate.google.com', 'maps.google.com', 'booking.com'
-}
 
 def get_root_domain(netloc):
     """Extract root domain from netloc. e.g. translate.google.com → google.com"""
@@ -91,6 +234,12 @@ def predict_url(url):
     if '.' not in parsed.netloc.replace('www.', ''):
         return "Invalid URL"
     
+    # ========== HOMOGRAPH DETECTION (NEW) ==========
+    homograph_result = check_homograph_attack(url)
+    if homograph_result['is_attack']:
+        print(f"[SECURITY] Homograph detected: {homograph_result['reason']}")
+        return "Malicious"
+    
     # 4 Trusted domain check
     root_domain = get_root_domain(parsed.netloc)
     if root_domain in TRUSTED_DOMAINS:
@@ -118,8 +267,15 @@ def predict_url(url):
 
 # Test
 if __name__ == "__main__":
-    test_url = "https://paypal-login-secure.com"
-    result = predict_url(test_url)
+    test_urls = [
+        "https://paypal-login-secure.com",
+        "https://google.com",                    # Should be Benign
+        "https://gооgle.com",                   # Cyrillic 'o' - should be Malicious
+        "https://аррӏе.com",                    # Cyrillic apple - should be Malicious
+        "https://paypa1.com",                    # Digit substitution - should be Malicious
+        "https://rnicrosoft.com",                # rn → m - should be Malicious
+    ]
 
-    print("URL:", test_url)
-    print("Prediction:", result)
+    for url in test_urls:
+        result = predict_url(url)
+        print("Prediction:", result)
