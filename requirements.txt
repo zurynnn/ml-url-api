@@ -6,3 +6,4 @@ joblib
 flask
 requests
 gunicorn
+unicodedata2
