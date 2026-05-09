@@ -6,6 +6,7 @@ import os
 import requests as req
 import unicodedata  # NEW
 import re
+import ipaddress
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Load model (RF))
@@ -203,6 +204,16 @@ def check_homograph_attack(url):
     return {'is_attack': False, 'reason': None}
 #//
 
+def is_safe_url(url):
+    parsed = urlparse(url)
+    try:
+        ip = ipaddress.ip_address(parsed.hostname)
+        if ip.is_private or ip.is_loopback or ip.is_link_local:
+            return False
+    except ValueError:
+        pass  # iF hostname, not an IP - OK
+    return True
+
 def unshorten_url(url):
     """Follow redirects to get the final destination URL."""
     parsed = urlparse(url)
@@ -211,15 +222,15 @@ def unshorten_url(url):
     if domain not in SHORTENER_DOMAINS:
         return url  # not a shortener, return as-is
     
+    if not is_safe_url(url):
+        return url
+    
     try:
         response = req.head(url, allow_redirects=True, timeout=5)
         final_url = response.url
-        print(f"[Unshortened] {url} → {final_url}")
         return final_url
     except Exception as e:
-        print(f"[Unshorten failed] {e}")
         return url  # if it fails, analyse the short URL itself
-    
 
 def get_root_domain(netloc):
     """Extract root domain from netloc. e.g. translate.google.com → google.com"""
@@ -400,7 +411,7 @@ def predict_url(url):
         return "Malicious"
     
     # 2 Basic input validation
-    if not url or len(url.strip()) < 4:
+    if len(url.strip()) > 2048:
         return "Invalid URL"
     
     # 3 Normalize & unshorten
@@ -418,7 +429,6 @@ def predict_url(url):
     # 4 Homograph detection
     homograph_result = check_homograph_attack(url)
     if homograph_result['is_attack']:
-        print(f"[SECURITY] Homograph detected: {homograph_result['reason']}")
         return "Malicious"
     
     # 5 Trusted domain check
@@ -453,7 +463,6 @@ def predict_url(url):
     
     # 9. Decision based on score
     if malicious_score >= 30:
-        print(f"[SCORE: {malicious_score}] {', '.join(reasons[:3])}")  # Show top 3 reasons
         return "Malicious"
     
     # 10. For moderate scores (10-29), use ML with lower threshold
@@ -462,9 +471,7 @@ def predict_url(url):
         df = pd.DataFrame([feature_vector], columns=features)
         prediction = model.predict(df)[0]
         proba = model.predict_proba(df)[0]
-        
-        print(f"[SCORE: {malicious_score}] ML confidence: {proba[1]:.2%}")
-        
+                
         # ML needs higher confidence when score is moderate
         if prediction == 1 and proba[1] > 0.60:
             return "Malicious"
