@@ -15,6 +15,9 @@ def predict():
     data = request.get_json()
     url = data.get("url") # Get URL from request
 
+    if not isinstance(url, str) or not url.strip():
+        return jsonify({"result": "Invalid URL", "final_url": ""}), 400
+
     if not url:
         return jsonify({"error": "No URL provided"}), 400
     
