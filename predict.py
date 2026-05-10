@@ -24,10 +24,13 @@ def normalize_url(url):
         url = "https://" + url
     
     parsed = urlparse(url)
-    
-    # Split the domain into parts to count segments
-    domain_parts = parsed.netloc.split('.')
+    domain_parts = parsed.netloc.split('.') # Split the domain into parts to count segments
 
+    # Skip adding www. for known shortener domains
+    root = '.'.join(parsed.netloc.split('.')[-2:])
+    if root in SHORTENER_DOMAINS_NO_WWW:
+        return url
+    
     # Skip if already has www or has subdomains
     if len(domain_parts) == 2 and not parsed.netloc.startswith("www."):
         url = url.replace(parsed.netloc, "www." + parsed.netloc)
@@ -42,6 +45,11 @@ SHORTENER_DOMAINS = {
     'short.gy', 'cli.gs', 'tr.im', 'v.gd', 'tinyurl.com',
     'shorturl.at', 'rb.gy', '9qr.de', 'qri.us', 'qrs.ly',
     'qr.ae', 'chl.li', 'soo.gd', '2.gp', 'gg.gg'
+}
+
+SHORTENER_DOMAINS_NO_WWW = {
+    'bit.ly', 't.co', 'rb.gy', 'qrco.de', 'cutt.ly', 
+    'tiny.cc', 'is.gd', 'ow.ly', 'v.gd', 'tr.im'
 }
 
 # Whitelist domains
@@ -432,83 +440,83 @@ def predict_url(url):
     # 1 Block dangerous schemes immediately
     dangerous_schemes = ['javascript:', 'data:', 'vbscript:', 'file:']
     if any(url.strip().lower().startswith(scheme) for scheme in dangerous_schemes):
-        return "Malicious"
+        return {"result": "Malicious", "final_url": url}
 
     # 2 Basic input validation
     if len(url.strip()) > 2048:
-        return "Invalid URL"
+        return {"result": "Invalid URL", "final_url": url}
 
     # 3 Normalize & unshorten
     url = normalize_url(url)
-    url = unshorten_url(url)
+    final_url  = unshorten_url(url)
 
     parsed = urlparse(url)
     if not parsed.netloc:
-        return "Invalid URL"
+        return {"result": "Invalid URL", "final_url": final_url}
 
     # Reject domains with no dot (not a real URL)
     if '.' not in parsed.netloc.replace('www.', ''):
-        return "Invalid URL"
+        return {"result": "Invalid URL", "final_url": final_url}
     
     # 4 Homograph detection
     homograph_result = check_homograph_attack(url)
     if homograph_result['is_attack']:
-        return "Malicious"
+        return {"result": "Malicious", "final_url": final_url}
     
     # 5 Trusted domain check
     root_domain = get_root_domain(parsed.netloc)
     if root_domain in TRUSTED_DOMAINS:
-        return "Benign" 
+        return {"result": "Benign", "final_url": final_url}
     
    # 6. PDF special handling - LESS AGGRESSIVE
     if parsed.path.lower().endswith(tuple(BENIGN_EXTENSIONS)):
         # Check if this is likely a legitimate business PDF
         if is_likely_legitimate_pdf(parsed):
-            return "Benign"  # Don't even check ML for obvious legit PDFs
+            return {"result": "Benign", "final_url": final_url}
         
         # For other PDFs, only mark malicious if ML is very confident
-        feature_vector = extract_features(url)
+        feature_vector = extract_features(final_url)
         df = pd.DataFrame([feature_vector], columns=features)
         prediction = model.predict(df)[0]
         proba = model.predict_proba(df)[0]
         
         # Only return malicious if ML is > 80% confident
         if prediction == 1 and proba[1] > 0.80:
-            return "Malicious"
-        return "Benign"  # Default to benign for PDFs
+            return {"result": "Malicious", "final_url": final_url}
+        return {"result": "Benign", "final_url": final_url} # Default to benign for PDFs
     
     # 7. Calculate malicious score for non-PDF URLs
-    malicious_score, reasons = calculate_malicious_score(url, parsed)
+    malicious_score, reasons = calculate_malicious_score(final_url, parsed)
     
     # 8. Fake ticker detection (for job scams)
-    if detect_fake_ticker_pattern(url):
+    if detect_fake_ticker_pattern(final_url):
         malicious_score += 25
         reasons.append("Fake registration ticker pattern detected")
     
     # 9. Decision based on score
     if malicious_score >= 30:
-        return "Malicious"
+        return {"result": "Malicious", "final_url": final_url}
     
     # 10. For moderate scores (10-29), use ML with lower threshold
     if 10 <= malicious_score < 30:  # Was 15-39
-        feature_vector = extract_features(url)
+        feature_vector = extract_features(final_url)
         df = pd.DataFrame([feature_vector], columns=features)
         prediction = model.predict(df)[0]
         proba = model.predict_proba(df)[0]
                 
         # ML needs higher confidence when score is moderate
         if prediction == 1 and proba[1] > 0.60:
-            return "Malicious"
-        return "Benign"
+            return {"result": "Malicious", "final_url": final_url}
+        return {"result": "Benign", "final_url": final_url}
     
     # 11 ML model (For low scores (0-9)) 
-    feature_vector = extract_features(url) # Convert URL → feature vector
+    feature_vector = extract_features(final_url) # Convert URL → feature vector
     df = pd.DataFrame([feature_vector], columns=features) # Convert to DataFrame 
     prediction = model.predict(df)[0] # Predict ML
     proba = model.predict_proba(df)[0]
 
-    return "Malicious" if prediction == 1 else "Benign" # Convert output
-
+    result = "Malicious" if prediction == 1 else "Benign" # Convert output
+    return {"result": result, "final_url": final_url}
 
 # Test
 if __name__ == "__main__":

@@ -17,20 +17,13 @@ def predict():
 
     if not url:
         return jsonify({"error": "No URL provided"}), 400
-
-    result = predict_url(url) # Get prediction from ML model
-
-    # Handle invalid URL case
-    if result == "Invalid URL":
-        return jsonify({
-            "url": url,
-            "result": "Invalid URL",
-            "message": "The scanned QR does not contain a valid URL"
-        }), 200
+    
+    prediction = predict_url(url)
 
     return jsonify({
         "url": url,
-        "result": result
+        "result": prediction["result"],        # ← read from dict
+        "final_url": prediction["final_url"],  # ← pass final_url to Flutter
     })
 
 # Run server
