@@ -1,10 +1,10 @@
 import joblib
 import pandas as pd
-from feature_extractor import extract_features, suspicious_list
+from feature_extractor import extract_features
 from urllib.parse import urlparse
 import os
 import requests as req
-import unicodedata  # NEW
+import unicodedata
 import re
 import ipaddress
 import logging
@@ -37,7 +37,7 @@ def normalize_url(url):
 
     return url
 
-# URL shorterner domains
+# URL shortener domains
 SHORTENER_DOMAINS = {
     'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly',
     'short.link', 'rb.gy', 'cutt.ly', 'tiny.cc', 'is.gd',
@@ -77,7 +77,7 @@ BENIGN_EXTENSIONS = {
     '.jpg', '.jpeg', '.png', '.gif', '.mp4', '.mp3', '.zip'
 }
 
-#Homograph 
+# Homograph 
 def check_homograph_attack(url):
     """
     Detect homograph/Unicode spoofing attacks.
@@ -91,7 +91,7 @@ def check_homograph_attack(url):
     if not domain:
         return {'is_attack': False, 'reason': None}
     
-    # ===== CHECK 1: Mixed Script Detection =====
+    # CHECK 1: Mixed Script Detection
     # Cyrillic characters that look like Latin
     cyrillic_chars = []
     latin_chars = []
@@ -115,7 +115,7 @@ def check_homograph_attack(url):
             'reason': f'Mixed scripts: Cyrillic ({cyrillic_chars}) and Latin characters'
         }
     
-    # ===== CHECK 2: Known Lookalike Characters =====
+    # CHECK 2: Known Lookalike Characters
     # Maps Cyrillic → Latin equivalent
     lookalikes = {
         'а': 'a',   # Cyrillic a
@@ -156,7 +156,7 @@ def check_homograph_attack(url):
                         'reason': f'Lookalike attack: "{domain}" pretends to be "{trusted}" (uses Cyrillic {cyrillic_char} instead of {latin_char})'
                     }
     
-    # ===== CHECK 3: Digit Substitution (g00gle → google) =====
+    # CHECK 3: Digit Substitution (g00gle → google)
     # Only check ASCII domains
     if domain.isascii(): 
         def _normalize_digits(d):
@@ -195,7 +195,7 @@ def check_homograph_attack(url):
                             'reason': f'Digit substitution: "{domain}" looks like "{trusted}"'
                         }
         
-    # ===== CHECK 4: Character Substitution (rn → m) =====
+    # CHECK 4: Character Substitution (rn → m)
     if 'rn' in domain:
         normalized = domain.replace('rn', 'm')
         for trusted in TRUSTED_DOMAINS:
@@ -205,7 +205,7 @@ def check_homograph_attack(url):
                     'reason': f'Character substitution: "{domain}" looks like "{trusted}" (rn → m)'
                 }
     
-    # ===== CHECK 5: Double Character Substitution (vv → w) =====
+    # CHECK 5: Double Character Substitution (vv → w)
     if 'vv' in domain:
         normalized = domain.replace('vv', 'w')
         for trusted in TRUSTED_DOMAINS:
@@ -216,7 +216,6 @@ def check_homograph_attack(url):
                 }
     
     return {'is_attack': False, 'reason': None}
-#//
 
 def is_safe_url(url):
     parsed = urlparse(url)
@@ -232,7 +231,7 @@ def is_safe_url(url):
             ip.is_link_local
         )
     except ValueError:
-        pass  # iF hostname, not an IP - OK
+        pass  # If hostname is not an IP - OK
 
     if parsed.hostname.startswith("-") or parsed.hostname.endswith("-"):
         return False
@@ -257,7 +256,7 @@ def unshorten_url(url):
         if not is_safe_url(final_url):
             return url
 
-        print(f"[Unshortened] {url} → {final_url}")
+        logging.info(f"Unshortened: {url} -> {final_url}")
         return final_url
             
     except Exception as e:
@@ -273,7 +272,7 @@ def get_root_domain(netloc):
 
 # ========== SCORING SYSTEM ==========
 def calculate_malicious_score(url, parsed):
-    """Calculate malicious score 0-100 based on multiple signals - STRONGER VERSION"""
+    """Calculate malicious score (0-100) based on multiple detection signals."""
     score = 0
     reasons = []
     
@@ -281,10 +280,10 @@ def calculate_malicious_score(url, parsed):
     tld = '.' + parsed.netloc.split('.')[-1]
     
     if tld in HIGH_RISK_TLDS:
-        score += 45  # Was 35
+        score += 45  
         reasons.append(f"High-risk TLD: {tld}")
     elif tld in SUSPICIOUS_TLDS:
-        score += 30  # Was 20
+        score += 30 
         reasons.append(f"Suspicious TLD: {tld}")
     
     # SIGNAL 2: Suspicious path keywords (0-35 points)
@@ -309,7 +308,7 @@ def calculate_malicious_score(url, parsed):
     
     # SIGNAL 3: URL length (0-20 points)
     if len(url) > 120:
-        score += 15  # Was 10
+        score += 15  
         reasons.append("Very long URL > 120 chars")
     elif len(url) > 90:  # Lowered threshold
         score += 8
@@ -318,10 +317,10 @@ def calculate_malicious_score(url, parsed):
     # SIGNAL 4: Deep path nesting (0-15 points)
     path_depth = parsed.path.count('/')
     if path_depth > 5:
-        score += 15  # Was 10
+        score += 15  
         reasons.append(f"Deep path nesting: {path_depth}")
     elif path_depth > 3:
-        score += 8  # Was 5
+        score += 8  
     
     # SIGNAL 5: Many subdomains (0-20 points)
     subdomain_count = parsed.netloc.count('.') - 1
@@ -334,18 +333,18 @@ def calculate_malicious_score(url, parsed):
     # SIGNAL 6: Query parameters (0-15 points)
     if parsed.query:
         if len(parsed.query) > 80:
-            score += 10  # Was 8
+            score += 10 
             reasons.append("Long query string")
-        if '=' in parsed.query and parsed.query.count('&') > 2:  # Was 3
-            score += 8  # Was 5
+        if '=' in parsed.query and parsed.query.count('&') > 2:  
+            score += 8 
             reasons.append("Multiple query parameters")
     
     # SIGNAL 7: Non-standard port (0-10 points)
     if parsed.port and parsed.port not in [80, 443, 8080, 8443]:
-        score += 10  # Was 5
+        score += 10 
         reasons.append(f"Non-standard port: {parsed.port}")
     
-    # SIGNAL 8: Suspicious domain patterns (NEW)
+    # SIGNAL 8: Suspicious domain patterns
     netloc = parsed.netloc.lower()
     suspicious_domain_patterns = ['-secure', '-login', '-verify', '-update', 
                                    'secure-', 'login-', 'verify-', 'account-']
@@ -435,18 +434,18 @@ def detect_fake_ticker_pattern(url, content=None):
     
     return False    
 
-# Predict url:
+# Predict URL
 def predict_url(url):
-    # 1 Block dangerous schemes immediately
+    # 1. Block dangerous schemes immediately
     dangerous_schemes = ['javascript:', 'data:', 'vbscript:', 'file:']
     if any(url.strip().lower().startswith(scheme) for scheme in dangerous_schemes):
         return {"result": "Malicious", "final_url": url}
 
-    # 2 Basic input validation
+    # 2. Basic input validation
     if len(url.strip()) > 2048:
         return {"result": "Invalid URL", "final_url": url}
 
-    # 3 Normalize & unshorten
+    # 3. Normalize & unshorten
     url = normalize_url(url)
     final_url  = unshorten_url(url)
 
@@ -462,17 +461,17 @@ def predict_url(url):
     if '@' in urlparse(url).netloc:
         return {"result": "Malicious", "final_url": url}
     
-    # 4 Homograph detection
+    # 4. Homograph detection
     homograph_result = check_homograph_attack(url)
     if homograph_result['is_attack']:
         return {"result": "Malicious", "final_url": final_url}
     
-    # 5 Trusted domain check
+    # 5. Trusted domain check
     root_domain = get_root_domain(parsed.netloc)
     if root_domain in TRUSTED_DOMAINS:
         return {"result": "Benign", "final_url": final_url}
     
-   # 6. PDF special handling - LESS AGGRESSIVE
+   # 6. PDF special handling 
     if parsed.path.lower().endswith(tuple(BENIGN_EXTENSIONS)):
         # Check if this is likely a legitimate business PDF
         if is_likely_legitimate_pdf(parsed):
@@ -484,7 +483,7 @@ def predict_url(url):
         prediction = model.predict(df)[0]
         proba = model.predict_proba(df)[0]
         
-        # Only return malicious if ML is > 80% confident
+        # Return malicious only if ML confidence exceeds 80%
         if prediction == 1 and proba[1] > 0.80:
             return {"result": "Malicious", "final_url": final_url}
         return {"result": "Benign", "final_url": final_url} # Default to benign for PDFs
@@ -492,17 +491,38 @@ def predict_url(url):
     # 7. Calculate malicious score for non-PDF URLs
     malicious_score, reasons = calculate_malicious_score(final_url, parsed)
     
-    # 8. Fake ticker detection (for job scams)
+    # 8. Long URL with suspicious patterns
+    full_url_lower = url.lower()
+    path = parsed.path.lower()
+    query = parsed.query.lower()
+    
+    # Only add penalty if URL is LONG and has other suspicious characteristics
+    if len(url) > 120:  # Long URL threshold
+        # Does it have a suspicious TLD? (from SUSPICIOUS_TLDS list)
+        is_suspicious_tld = any(tld in parsed.netloc.lower() for tld in SUSPICIOUS_TLDS)
+        
+        # Check for random-looking parameters (hex, long sessions, excessive query params)
+        has_random_data = any(x in query for x in ['data=', 'session=', 'auth=', 'token='])
+        has_many_params = query.count('&') > 3
+        
+        # Is it trying to hide phishing keywords?
+        has_hiding_attempt = 'verify' in path or 'secure' in path or 'login' in path
+        
+        if (is_suspicious_tld or has_random_data or has_many_params or has_hiding_attempt):
+            malicious_score += 12
+            reasons.append("Suspiciously long URL with evasion patterns")
+
+    # 9. Fake ticker detection (for job scams)
     if detect_fake_ticker_pattern(final_url):
         malicious_score += 25
         reasons.append("Fake registration ticker pattern detected")
     
-    # 9. Decision based on score
+    # 10. Decision based on score
     if malicious_score >= 30:
         return {"result": "Malicious", "final_url": final_url}
     
-    # 10. For moderate scores (10-29), use ML with lower threshold
-    if 10 <= malicious_score < 30:  # Was 15-39
+    # 11. For moderate scores (10-29), use ML with lower threshold
+    if 10 <= malicious_score < 30: 
         feature_vector = extract_features(final_url)
         df = pd.DataFrame([feature_vector], columns=features)
         prediction = model.predict(df)[0]
@@ -513,7 +533,7 @@ def predict_url(url):
             return {"result": "Malicious", "final_url": final_url}
         return {"result": "Benign", "final_url": final_url}
     
-    # 11 ML model (For low scores (0-9)) 
+    # 12. ML model (For low scores (0-9)) 
     feature_vector = extract_features(final_url) # Convert URL → feature vector
     df = pd.DataFrame([feature_vector], columns=features) # Convert to DataFrame 
     prediction = model.predict(df)[0] # Predict ML
@@ -521,33 +541,3 @@ def predict_url(url):
 
     result = "Malicious" if prediction == 1 else "Benign" # Convert output
     return {"result": result, "final_url": final_url}
-
-# Test
-if __name__ == "__main__":
-    print("\n===== URL PREDICTION TEST =====\n")
-    
-    test_urls = [
-        # Benign
-        "https://www.google.com",
-        "https://github.com/",
-        "https://www.paypal.com/my/home",
-        "http://www.olddubliner.de/Drinks/ODHH_DrinksMenu.pdf",  # Should be Benign
-        "https://www.jobstreet.com.my/jobs",  # Real job site
-        
-        # Malicious
-        "https://paypal-login-secure.com",
-        "https://jawatan-kosong-terkini.semak-now.online/1/",  # Should be Malicious
-        "https://bantuan-kerajaan.online/verify",
-        "https://semak-brim.xyz",
-        "https://secure-update-account-verify.com",
-        
-        # Homograph
-        "https://www.paypa1.com",
-        "https://www.g00gle.com",
-        "https://www.arnazon.com",
-    ]
-    
-    for url in test_urls:
-        result = predict_url(url)
-        print(f"{url[:70]} → {result}")
-        print("-" * 80)
