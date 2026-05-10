@@ -7,6 +7,9 @@ import requests as req
 import unicodedata  # NEW
 import re
 import ipaddress
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Load model (RF))
@@ -35,7 +38,10 @@ def normalize_url(url):
 SHORTENER_DOMAINS = {
     'bit.ly', 'tinyurl.com', 't.co', 'goo.gl', 'ow.ly',
     'short.link', 'rb.gy', 'cutt.ly', 'tiny.cc', 'is.gd',
-    'buff.ly', 'adf.ly', 'shorte.st', 'link.tl'
+    'buff.ly', 'adf.ly', 'shorte.st', 'link.tl', 'qrco.de',
+    'short.gy', 'cli.gs', 'tr.im', 'v.gd', 'tinyurl.com',
+    'shorturl.at', 'rb.gy', '9qr.de', 'qri.us', 'qrs.ly',
+    'qr.ae', 'chl.li', 'soo.gd', '2.gp', 'gg.gg'
 }
 
 # Whitelist domains
@@ -206,12 +212,23 @@ def check_homograph_attack(url):
 
 def is_safe_url(url):
     parsed = urlparse(url)
+
+    if not parsed.hostname:
+        return False
+    
     try:
         ip = ipaddress.ip_address(parsed.hostname)
-        if ip.is_private or ip.is_loopback or ip.is_link_local:
-            return False
+        return not (
+            ip.is_private or
+            ip.is_loopback or
+            ip.is_link_local
+        )
     except ValueError:
         pass  # iF hostname, not an IP - OK
+
+    if parsed.hostname.startswith("-") or parsed.hostname.endswith("-"):
+        return False
+    
     return True
 
 def unshorten_url(url):
@@ -228,10 +245,17 @@ def unshorten_url(url):
     try:
         response = req.head(url, allow_redirects=True, timeout=5)
         final_url = response.url
-        return final_url
-    except Exception as e:
-        return url  # if it fails, analyse the short URL itself
 
+        if not is_safe_url(final_url):
+            return url
+
+        print(f"[Unshortened] {url} → {final_url}")
+        return final_url
+            
+    except Exception as e:
+        logging.warning(f"Unshorten failed: {e}")
+        return url  # if it fails, analyse the short URL itself
+    
 def get_root_domain(netloc):
     """Extract root domain from netloc. e.g. translate.google.com → google.com"""
     parts = netloc.replace('www.', '').split('.')
@@ -409,11 +433,11 @@ def predict_url(url):
     dangerous_schemes = ['javascript:', 'data:', 'vbscript:', 'file:']
     if any(url.strip().lower().startswith(scheme) for scheme in dangerous_schemes):
         return "Malicious"
-    
+
     # 2 Basic input validation
     if len(url.strip()) > 2048:
         return "Invalid URL"
-    
+
     # 3 Normalize & unshorten
     url = normalize_url(url)
     url = unshorten_url(url)
