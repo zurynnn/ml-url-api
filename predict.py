@@ -458,6 +458,10 @@ def predict_url(url):
     if '.' not in parsed.netloc.replace('www.', ''):
         return {"result": "Invalid URL", "final_url": final_url}
     
+    # Block URL authority confusion attack
+    if '@' in urlparse(url).netloc:
+        return {"result": "Malicious", "final_url": url}
+    
     # 4 Homograph detection
     homograph_result = check_homograph_attack(url)
     if homograph_result['is_attack']:
